@@ -2,29 +2,27 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import joblib
-import re
-import io
 import sqlite3
+import joblib
+import io
+import re
 import requests
 import networkx as nx
 
 from Bio import SeqIO
 from sklearn.metrics import roc_curve, auc
 from sklearn.decomposition import PCA
-from sklearn.ensemble import RandomForestClassifier
 from lifelines import KaplanMeierFitter
-
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-st.set_page_config(page_title="Genomic AI Platform", layout="wide")
+st.set_page_config(layout="wide")
 
-st.title("🧬 Integrated Genomic Clinical Intelligence Platform")
+st.title("🧬 CRAZY Genomic Clinical Intelligence Platform")
 
 model = joblib.load("huntington_ml_model.pkl")
 
-# ---------------- DATABASE ---------------- #
+# ================= DATABASE =================
 
 conn = sqlite3.connect("patients.db")
 cursor = conn.cursor()
@@ -35,55 +33,100 @@ CREATE TABLE IF NOT EXISTS patients
 """)
 conn.commit()
 
-# ---------------- PATHOGENICITY MODEL ---------------- #
+# ================= FUNCTIONS =================
 
-path_model = RandomForestClassifier()
+def make_pdf(name,gene,repeat,result):
 
-X_train = pd.DataFrame({
-"pos":[100,200,300,400,500],
-"impact":[1,0,1,1,0]
-})
+    file="patient_report.pdf"
 
-y_train = [1,0,1,1,0]
+    c=canvas.Canvas(file,pagesize=letter)
 
-path_model.fit(X_train,y_train)
+    c.drawString(100,750,"Genomic Risk Report")
 
-# ---------------- DRUG MAP ---------------- #
+    c.drawString(100,700,f"Patient: {name}")
+    c.drawString(100,650,f"Gene: {gene}")
+    c.drawString(100,600,f"Repeat: {repeat}")
+    c.drawString(100,550,f"Result: {result}")
 
-drug_map = {
+    c.save()
+
+    return file
+
+
+def history_pdf(df):
+
+    file="history.pdf"
+
+    c=canvas.Canvas(file,pagesize=letter)
+
+    y=750
+
+    for i,row in df.iterrows():
+
+        c.drawString(50,y,
+        f"{row['name']} | {row['gene']} | {row['repeat']} | {row['result']}")
+
+        y-=20
+
+        if y<100:
+            c.showPage()
+            y=750
+
+    c.save()
+
+    return file
+
+
+def annotate(chrom,pos):
+
+    try:
+
+        r=requests.get(
+        f"https://rest.ensembl.org/overlap/region/human/{chrom}:{pos}-{pos}",
+        headers={"Content-Type":"application/json"})
+
+        data=r.json()
+
+        return data[0]["external_name"] if data else "Intergenic"
+
+    except:
+        return "NA"
+
+drug_map={
 "HTT":"Tetrabenazine",
 "BRCA1":"Olaparib",
 "CFTR":"Ivacaftor"
 }
 
-# ---------------- TABS ---------------- #
+# ================= TABS =================
 
-tabs = st.tabs([
+tabs=st.tabs([
 "Prediction",
+"History",
 "Batch",
 "FASTA",
 "VCF",
-"Advanced Analytics",
+"Analytics",
 "ROC"
 ])
 
-# =========================================================
+# =====================================================
 # PREDICTION
-# =========================================================
+# =====================================================
 
 with tabs[0]:
 
-    gene = st.selectbox("Gene",["HTT","BRCA1","CFTR"])
+    gene=st.selectbox("Gene",["HTT","BRCA1","CFTR"])
 
-    repeat = st.slider("Repeat Count",5,60,20)
+    repeat=st.slider("Repeat",5,60,20)
 
-    name = st.text_input("Patient Name")
+    name=st.text_input("Patient")
 
-    threshold = {"HTT":36,"BRCA1":10,"CFTR":15}[gene]
+    thr={"HTT":36,"BRCA1":10,"CFTR":15}[gene]
 
-    if st.button("Predict Risk"):
+    if st.button("Predict"):
 
-        result = "Risk" if repeat>=threshold else "Normal"
+        result="Risk" if repeat>=thr else "Normal"
 
         st.write(result)
 
@@ -91,184 +134,157 @@ with tabs[0]:
         "INSERT INTO patients VALUES (?,?,?,?)",
         (name,gene,repeat,result)
         )
-
         conn.commit()
 
-        fig,ax=plt.subplots()
-        ax.bar(["Repeat"],[repeat])
-        ax.axhline(threshold,color="red")
-        st.pyplot(fig)
-
-        pdf="report.pdf"
-        c=canvas.Canvas(pdf,pagesize=letter)
-        c.drawString(100,700,f"Patient:{name}")
-        c.drawString(100,650,f"Gene:{gene}")
-        c.drawString(100,600,f"Repeat:{repeat}")
-        c.drawString(100,550,f"Result:{result}")
-        c.save()
+        pdf=make_pdf(name,gene,repeat,result)
 
         with open(pdf,"rb") as f:
             st.download_button("Download Report",f)
 
-# =========================================================
-# BATCH
-# =========================================================
+# =====================================================
+# HISTORY
+# =====================================================
 
 with tabs[1]:
 
-    csv = st.file_uploader("Upload CSV", type=["csv"])
+    df=pd.read_sql("SELECT * FROM patients",conn)
 
-    if csv:
+    st.dataframe(df)
 
-        df = pd.read_csv(csv)
+    if st.button("Download History PDF"):
 
-        df["Prediction"] = (df["CAG_Repeats"]>=36).astype(int)
+        file=history_pdf(df)
 
-        st.dataframe(df)
+        with open(file,"rb") as f:
+            st.download_button("Download",f)
 
-# =========================================================
-# FASTA
-# =========================================================
+# =====================================================
+# BATCH
+# =====================================================
 
 with tabs[2]:
 
-    fasta = st.file_uploader("Upload FASTA", type=["fa","fasta"])
+    csv=st.file_uploader("CSV",type=["csv"])
 
-    if fasta:
+    if csv:
 
-        text_stream = io.StringIO(fasta.getvalue().decode())
+        df=pd.read_csv(csv)
 
-        record = SeqIO.read(text_stream,"fasta")
+        df["Prediction"]=(df["CAG_Repeats"]>=36).astype(int)
 
-        seq = str(record.seq)
+        st.dataframe(df)
 
-        matches = list(re.finditer(r"(?:CAG){2,}", seq))
-
-        pos = [(m.start(),(m.end()-m.start())//3) for m in matches]
-
-        if pos:
-
-            df = pd.DataFrame(pos, columns=["Position","Repeat"])
-
-            st.dataframe(df)
-
-            fig,ax = plt.subplots(figsize=(12,2))
-
-            for p in df["Position"][:30]:
-                ax.plot([p,p],[0,1],linewidth=2)
-
-            ax.set_title("Genome Track")
-            st.pyplot(fig)
-
-# =========================================================
-# VCF
-# =========================================================
-
-def annotate(chrom,pos):
-
-    server="https://rest.ensembl.org"
-    ext=f"/overlap/region/human/{chrom}:{pos}-{pos}"
-
-    r=requests.get(server+ext,
-                   headers={"Content-Type":"application/json"})
-
-    if not r.ok:
-        return "NA"
-
-    data=r.json()
-
-    return data[0]["external_name"] if data else "Intergenic"
+# =====================================================
+# FASTA
+# =====================================================
 
 with tabs[3]:
 
-    vcf = st.file_uploader("Upload VCF", type=["vcf"])
+    fasta=st.file_uploader("FASTA",type=["fa","fasta"])
+
+    if fasta:
+
+        txt=io.StringIO(fasta.getvalue().decode())
+
+        record=SeqIO.read(txt,"fasta")
+
+        seq=str(record.seq)
+
+        m=list(re.finditer(r"(?:CAG){2,}",seq))
+
+        pos=[(x.start(),(x.end()-x.start())//3) for x in m]
+
+        if pos:
+
+            df=pd.DataFrame(pos,columns=["Position","Repeat"])
+
+            st.dataframe(df)
+
+            fig,ax=plt.subplots(figsize=(12,2))
+
+            for p in df["Position"][:40]:
+                ax.plot([p,p],[0,1])
+
+            st.pyplot(fig)
+
+# =====================================================
+# VCF
+# =====================================================
+
+with tabs[4]:
+
+    vcf=st.file_uploader("VCF",type=["vcf"])
 
     if vcf:
 
-        lines = vcf.getvalue().decode().split("\n")
+        lines=vcf.getvalue().decode().split("\n")
 
-        samples=[]
-        variants=[]
+        vars=[]
 
         for l in lines:
-
-            if l.startswith("#CHROM"):
-                samples=l.split("\t")[9:]
 
             if not l.startswith("#") and l.strip():
 
                 c=l.split("\t")
 
-                chrom=c[0]
-                pos=int(c[1])
+                vars.append([c[0],int(c[1])])
 
-                variants.append([chrom,pos])
-
-        df = pd.DataFrame(variants,columns=["Chrom","Pos"])
+        df=pd.DataFrame(vars,columns=["Chrom","Pos"])
 
         df["Gene"]=df.apply(lambda x:
         annotate(x["Chrom"],x["Pos"]),axis=1)
 
         df["Drug"]=df["Gene"].map(drug_map)
 
-        df["Pathogenicity"]=path_model.predict(
-        pd.DataFrame({
-        "pos":df["Pos"],
-        "impact":[1]*len(df)
-        }))
+        prs=df["Gene"].map({"HTT":2.5,"BRCA1":3,"CFTR":1.8}).sum()
 
-        prs = df["Gene"].map({"HTT":2.5,"BRCA1":3,"CFTR":1.8}).sum()
-
-        st.write("Polygenic Risk Score:", prs)
+        st.write("PRS:",prs)
 
         st.dataframe(df)
 
-# =========================================================
-# ADVANCED ANALYTICS
-# =========================================================
+# =====================================================
+# ANALYTICS
+# =====================================================
 
-with tabs[4]:
+with tabs[5]:
 
-    st.subheader("CNV Simulation")
+    st.subheader("CNV")
 
-    cnv = pd.DataFrame({
+    cnv=pd.DataFrame({
     "Region":range(20),
-    "CNV":np.random.choice(
-    ["Deletion","Normal","Amplification"],20)
+    "Type":np.random.choice(["Del","Amp","Norm"],20)
     })
 
     st.dataframe(cnv)
 
     st.subheader("Expression Heatmap")
 
-    expr = np.random.randn(10,5)
+    expr=np.random.randn(10,5)
 
     fig,ax=plt.subplots()
 
-    ax.imshow(expr,cmap="coolwarm")
+    ax.imshow(expr)
 
     st.pyplot(fig)
 
-    st.subheader("Variant Network")
+    st.subheader("Network")
 
-    G = nx.Graph()
+    G=nx.Graph()
 
     for i in range(10):
-        G.add_edge(f"V{i}",f"Gene{i%3}")
+        G.add_edge(f"V{i}",f"G{i%3}")
 
-    fig2 = plt.figure()
+    fig2=plt.figure()
 
     nx.draw(G,with_labels=True)
 
     st.pyplot(fig2)
 
-    st.subheader("PCA Clustering")
+    st.subheader("PCA")
 
-    X = np.random.randn(8,20)
+    X=np.random.randn(8,20)
 
-    pca = PCA(n_components=2)
-
-    comp = pca.fit_transform(X)
+    comp=PCA(2).fit_transform(X)
 
     fig3,ax3=plt.subplots()
 
@@ -276,43 +292,39 @@ with tabs[4]:
 
     st.pyplot(fig3)
 
-    st.subheader("Kaplan-Meier Survival")
+    st.subheader("Survival")
 
-    kmf = KaplanMeierFitter()
+    km=KaplanMeierFitter()
 
-    t = np.random.exponential(10,50)
-    e = np.random.choice([0,1],50)
+    t=np.random.exponential(10,50)
+    e=np.random.choice([0,1],50)
 
-    kmf.fit(t,e)
+    km.fit(t,e)
 
     fig4,ax4=plt.subplots()
 
-    kmf.plot(ax=ax4)
+    km.plot(ax=ax4)
 
     st.pyplot(fig4)
 
-# =========================================================
+# =====================================================
 # ROC
-# =========================================================
+# =====================================================
 
-with tabs[5]:
+with tabs[6]:
 
     x=np.linspace(15,55,200)
 
-    probs=model.predict_proba(
+    p=model.predict_proba(
     pd.DataFrame({"CAG_Repeats":x}))[:,1]
 
     y=(x>=36).astype(int)
 
-    fpr,tpr,_=roc_curve(y,probs)
-
-    auc_score=auc(fpr,tpr)
+    fpr,tpr,_=roc_curve(y,p)
 
     fig,ax=plt.subplots()
 
-    ax.plot(fpr,tpr,label=f"AUC={auc_score:.2f}")
+    ax.plot(fpr,tpr)
     ax.plot([0,1],[0,1],'--')
-
-    ax.legend()
 
     st.pyplot(fig)
