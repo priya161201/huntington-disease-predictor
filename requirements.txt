@@ -7,3 +7,5 @@ scikit-learn
 biopython
 reportlab
 requests
+networkx
+lifelines
