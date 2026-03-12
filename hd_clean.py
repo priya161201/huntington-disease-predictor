@@ -4,6 +4,7 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import re
+import io
 from Bio import SeqIO
 from sklearn.metrics import roc_curve, auc
 
@@ -25,7 +26,10 @@ color:#2E86C1;
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<p class="big-font">Genomic Risk Intelligence Dashboard</p>', unsafe_allow_html=True)
+st.markdown(
+'<p class="big-font">Genomic Risk Intelligence Dashboard</p>',
+unsafe_allow_html=True
+)
 
 # ---------------- LOAD MODEL ---------------- #
 
@@ -41,7 +45,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # ==========================================================
-# 🧬 TAB 1 → SINGLE PREDICTION
+# 🧬 SINGLE PREDICTION
 # ==========================================================
 
 with tab1:
@@ -52,7 +56,9 @@ with tab1:
 
     if st.button("Predict Risk"):
 
-        pred = model.predict(pd.DataFrame({"CAG_Repeats":[repeat]}))[0]
+        pred = model.predict(
+            pd.DataFrame({"CAG_Repeats":[repeat]})
+        )[0]
 
         if repeat < 27:
             st.success("✅ Normal Range")
@@ -64,21 +70,23 @@ with tab1:
         fig, ax = plt.subplots()
 
         ax.bar(["Your Repeat"], [repeat], color="skyblue")
-        ax.axhline(36, color="red", linestyle="--", label="Disease Threshold")
+        ax.axhline(36, color="red", linestyle="--",
+                   label="Disease Threshold")
+
         ax.set_ylabel("CAG Count")
         ax.legend()
 
         st.pyplot(fig)
 
 # ==========================================================
-# 👥 TAB 2 → BATCH PREDICTION
+# 📂 BATCH PREDICTION
 # ==========================================================
 
 with tab2:
 
     st.header("Batch Patient Prediction")
 
-    st.info("Upload CSV with column: CAG_Repeats")
+    st.info("Upload CSV containing column: CAG_Repeats")
 
     file = st.file_uploader("Upload CSV", type=["csv"])
 
@@ -86,7 +94,9 @@ with tab2:
 
         df = pd.read_csv(file)
 
-        df["Prediction"] = model.predict(df[["CAG_Repeats"]])
+        df["Prediction"] = model.predict(
+            df[["CAG_Repeats"]]
+        )
 
         st.dataframe(df)
 
@@ -97,18 +107,24 @@ with tab2:
         )
 
 # ==========================================================
-# 🔬 TAB 3 → FASTA ANALYSIS
+# 🔬 FASTA GENOMIC ANALYSIS (FIXED CLOUD VERSION)
 # ==========================================================
 
 with tab3:
 
     st.header("HTT Gene FASTA Analysis")
 
-    fasta = st.file_uploader("Upload FASTA file", type=["fasta","fa"])
+    fasta = st.file_uploader(
+        "Upload FASTA file", type=["fasta","fa"]
+    )
 
     if fasta:
 
-        record = SeqIO.read(fasta, "fasta")
+        text_stream = io.StringIO(
+            fasta.getvalue().decode("utf-8")
+        )
+
+        record = SeqIO.read(text_stream, "fasta")
 
         seq = str(record.seq)
 
@@ -120,31 +136,37 @@ with tab3:
 
             max_repeat = max(counts)
 
-            st.subheader(f"Longest CAG Repeat Found: {max_repeat}")
+            st.subheader(
+                f"Longest CAG Repeat Found: {max_repeat}"
+            )
 
             if max_repeat >= 36:
-                st.error("⚠️ Huntington Disease Risk Region Detected")
+                st.error(
+                "⚠️ Huntington Disease Risk Region Detected"
+                )
             else:
                 st.success("Normal Repeat Length")
 
         else:
-            st.info("No significant CAG repeat expansion found")
+            st.info(
+            "No significant CAG repeat expansion found"
+            )
 
 # ==========================================================
-# 📊 TAB 4 → ROC CURVE DASHBOARD
+# 📊 ROC CURVE DASHBOARD
 # ==========================================================
 
 with tab4:
 
     st.header("Model ROC Curve")
 
-    x = np.linspace(15, 55, 200)
+    x = np.linspace(15,55,200)
 
     probs = model.predict_proba(
         pd.DataFrame({"CAG_Repeats":x})
     )[:,1]
 
-    y_true = (x >= 36).astype(int)
+    y_true = (x>=36).astype(int)
 
     fpr, tpr, _ = roc_curve(y_true, probs)
 
@@ -152,7 +174,10 @@ with tab4:
 
     fig, ax = plt.subplots()
 
-    ax.plot(fpr, tpr, label=f"AUC = {roc_auc:.2f}", color="darkorange")
+    ax.plot(fpr, tpr,
+            label=f"AUC = {roc_auc:.2f}",
+            color="darkorange")
+
     ax.plot([0,1],[0,1],'--', color="navy")
 
     ax.set_xlabel("False Positive Rate")
