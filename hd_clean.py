@@ -114,18 +114,44 @@ with tabs[0]:
 # BATCH
 # =========================================================
 
-with tabs[1]:
+with tab1:
 
-    csv = st.file_uploader("Upload CSV", type=["csv"])
+    gene = st.selectbox("Gene",["HTT","BRCA1","CFTR"])
 
-    if csv:
+    repeat = st.slider("Repeat Count",5,60,20)
 
-        df = pd.read_csv(csv)
+    name = st.text_input("Patient Name")
 
-        df["Prediction"] = (df["CAG_Repeats"]>=36).astype(int)
+    threshold = {"HTT":36,"BRCA1":10,"CFTR":15}[gene]
 
-        st.dataframe(df)
+    if st.button("Predict"):
 
+        result = "Risk" if repeat>=threshold else "Normal"
+
+        st.write(result)
+
+        cursor.execute(
+        "INSERT INTO patients VALUES (?,?,?,?)",
+        (name,gene,repeat,result)
+        )
+
+        conn.commit()
+
+        fig,ax=plt.subplots()
+        ax.bar(["Repeat"],[repeat])
+        ax.axhline(threshold,color="red")
+        st.pyplot(fig)
+
+        pdf="report.pdf"
+        c=canvas.Canvas(pdf,pagesize=letter)
+        c.drawString(100,700,f"Patient:{name}")
+        c.drawString(100,650,f"Gene:{gene}")
+        c.drawString(100,600,f"Repeat:{repeat}")
+        c.drawString(100,550,f"Result:{result}")
+        c.save()
+
+        with open(pdf,"rb") as f:
+            st.download_button("Download Report",f,"report.pdf")
 # =========================================================
 # FASTA
 # =========================================================
@@ -316,3 +342,4 @@ with tabs[5]:
     ax.legend()
 
     st.pyplot(fig)
+
