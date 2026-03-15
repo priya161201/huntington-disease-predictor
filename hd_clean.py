@@ -1,134 +1,198 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
+import numpy as np
+import sqlite3
 import plotly.graph_objects as go
-from io import StringIO
+import plotly.express as px
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_curve, confusion_matrix
+from lifelines import KaplanMeierFitter
+from reportlab.pdfgen import canvas
 
-# ================= THEME =================
+st.set_page_config(page_title="Genomic AI Platform", layout="wide")
 
-st.set_page_config(page_title="Huntington AI", layout="wide")
+# ================= DATABASE =================
 
-if "theme" not in st.session_state:
-    st.session_state.theme = "Light"
+conn = sqlite3.connect("patients.db", check_same_thread=False)
+c = conn.cursor()
 
-if st.sidebar.radio("Theme", ["Light","Dark"]) == "Dark":
-    st.session_state.theme = "Dark"
-    st.markdown(
-        """
-        <style>
-        .stApp {background-color:#0E1117;color:white}
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+c.execute("""
+CREATE TABLE IF NOT EXISTS patients(
+name TEXT,
+age INTEGER,
+cag INTEGER,
+risk TEXT
+)
+""")
+conn.commit()
 
 # ================= LOGIN =================
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
 st.sidebar.title("Login")
 
-user = st.sidebar.text_input("Username")
-pw = st.sidebar.text_input("Password", type="password")
+role = st.sidebar.selectbox("Select Role", ["Patient", "Doctor"])
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
 
 if st.sidebar.button("Login"):
-    if user != "" and pw != "":
-        st.session_state.logged_in = True
-        st.success("Login Successful")
+    st.session_state.logged = True
+    st.session_state.role = role
 
-# ================= MAIN =================
+if "logged" not in st.session_state:
+    st.warning("Please Login from Sidebar")
+    st.stop()
 
-if st.session_state.logged_in:
+# ================= TABS =================
 
-    st.title("🧬 Huntington Disease AI Platform")
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+"Risk Prediction",
+"Patient Database",
+"ROC Dashboard",
+"Genome Browser",
+"Survival Analysis",
+"PDF Report"
+])
 
-    tab1, tab2, tab3 = st.tabs([
-        "Prediction",
-        "Batch Patients",
-        "FASTA Analysis"
-    ])
+# ================= TAB 1 =================
 
-    # ================= PREDICTION =================
+with tab1:
 
-    with tab1:
+    st.title("Huntington Disease Risk Gauge")
 
-        cag = st.slider("Select CAG Repeat", 10, 60, 20)
+    name = st.text_input("Patient Name")
+    age = st.number_input("Age", 1, 100)
+    cag = st.slider("CAG Repeat Count", 10, 60, 20)
 
-        if st.button("Predict Risk"):
+    if st.button("Predict Risk"):
 
-            if cag < 27:
-                risk = 10
-                label = "Normal"
-            elif cag < 36:
-                risk = 50
-                label = "Intermediate"
-            else:
-                risk = 90
-                label = "High Risk"
+        if cag < 27:
+            risk = "Normal"
+            gauge_val = 20
+        elif cag < 36:
+            risk = "Intermediate"
+            gauge_val = 50
+        else:
+            risk = "High Risk"
+            gauge_val = 90
 
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=risk,
-                title={'text': label},
-                gauge={
-                    'axis': {'range': [0,100]},
-                    'bar': {'color': "red"},
-                    'steps': [
-                        {'range': [0,30], 'color': "green"},
-                        {'range': [30,70], 'color': "orange"},
-                        {'range': [70,100], 'color': "red"},
-                    ]
-                }
-            ))
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=gauge_val,
+            title={'text': risk},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'steps': [
+                    {'range': [0, 30], 'color': "green"},
+                    {'range': [30, 70], 'color': "orange"},
+                    {'range': [70, 100], 'color': "red"},
+                ]
+            }
+        ))
 
-            st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # ================= BATCH =================
+        if st.session_state.role == "Doctor":
+            c.execute("INSERT INTO patients VALUES (?,?,?,?)",
+                      (name, age, cag, risk))
+            conn.commit()
+            st.success("Patient Saved")
 
-    with tab2:
+# ================= TAB 2 =================
 
-        st.subheader("Upload Patient CSV")
+with tab2:
 
-        file = st.file_uploader("Upload CSV", type=["csv"])
+    st.title("Search Patient History")
 
-        if file:
+    df = pd.read_sql("SELECT * FROM patients", conn)
 
-            df = pd.read_csv(file)
+    search = st.text_input("Search Name")
 
-            def predict(x):
-                if x < 27:
-                    return "Normal"
-                elif x < 36:
-                    return "Intermediate"
-                else:
-                    return "High Risk"
+    if search:
+        df = df[df["name"].str.contains(search, case=False)]
 
-            df["Prediction"] = df["CAG_Repeats"].apply(predict)
+    st.dataframe(df)
 
-            st.dataframe(df)
+# ================= TAB 3 =================
 
-            st.download_button(
-                "Download Results",
-                df.to_csv(index=False),
-                "predictions.csv"
-            )
+with tab3:
 
-    # ================= FASTA =================
+    st.title("ROC + Confusion Matrix")
 
-    with tab3:
+    X = np.random.randint(15, 55, 200).reshape(-1, 1)
+    y = (X > 36).astype(int)
 
-        fasta = st.file_uploader("Upload FASTA", type=["fasta","fa"])
+    model = LogisticRegression().fit(X, y)
+    prob = model.predict_proba(X)[:, 1]
 
-        if fasta:
+    fpr, tpr, _ = roc_curve(y, prob)
 
-            stringio = StringIO(fasta.getvalue().decode("utf-8"))
-            seq = stringio.read()
+    roc_fig = px.line(x=fpr, y=tpr, title="ROC Curve")
+    st.plotly_chart(roc_fig, use_container_width=True)
 
-            cag_count = seq.count("CAG")
+    cm = confusion_matrix(y, model.predict(X))
 
-            st.metric("Detected CAG Motifs", cag_count)
+    cm_fig = px.imshow(cm, text_auto=True, title="Confusion Matrix")
+    st.plotly_chart(cm_fig, use_container_width=True)
 
-else:
+# ================= TAB 4 =================
 
-    st.warning("Please login from sidebar")
+with tab4:
+
+    st.title("Genome Track Visualization")
+
+    pos = np.random.randint(1, 10000, 30)
+    length = np.random.randint(1, 20, 30)
+
+    fig = go.Figure()
+
+    for p, l in zip(pos, length):
+        fig.add_shape(type="line",
+                      x0=p, x1=p+l,
+                      y0=1, y1=1,
+                      line=dict(width=l))
+
+    fig.update_layout(title="CAG Repeat Track")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# ================= TAB 5 =================
+
+with tab5:
+
+    st.title("Kaplan Survival Plot")
+
+    T = np.random.exponential(10, 100)
+    E = np.random.binomial(1, 0.6, 100)
+
+    km = KaplanMeierFitter()
+    km.fit(T, E)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=km.survival_function_.index,
+        y=km.survival_function_["KM_estimate"],
+        mode="lines"
+    ))
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# ================= TAB 6 =================
+
+with tab6:
+
+    st.title("Generate Medical PDF Report")
+
+    pname = st.text_input("Patient Name")
+
+    if st.button("Generate Report"):
+
+        file = "genomic_report.pdf"
+
+        cpdf = canvas.Canvas(file)
+        cpdf.drawString(100, 750, "Genomic AI Medical Report")
+        cpdf.drawString(100, 700, f"Patient: {pname}")
+        cpdf.save()
+
+        with open(file, "rb") as f:
+            st.download_button("Download Report", f, file)
