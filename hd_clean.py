@@ -1,330 +1,164 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import sqlite3
 import joblib
-import io
-import re
-import requests
-import networkx as nx
+import plotly.graph_objects as go
+from streamlit_lottie import st_lottie
+import json
 
-from Bio import SeqIO
-from sklearn.metrics import roc_curve, auc
-from sklearn.decomposition import PCA
-from lifelines import KaplanMeierFitter
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(page_title="Genomic AI Platform", layout="wide")
 
-st.set_page_config(layout="wide")
+# ---------------- THEME TOGGLE ----------------
+theme = st.sidebar.toggle("🌙 Dark Mode")
 
-st.title("🧬 CRAZY Genomic Clinical Intelligence Platform")
+if theme:
+    st.markdown("""
+    <style>
+    .stApp {background-color:#0E1117;color:white;}
+    </style>
+    """, unsafe_allow_html=True)
 
+# ---------------- LOGIN SYSTEM ----------------
+if "login" not in st.session_state:
+    st.session_state.login = False
+
+def login():
+    st.title("🔐 Genomic AI Login")
+
+    user = st.text_input("Username")
+    pwd = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        if user == "admin" and pwd == "genomics":
+            st.session_state.login = True
+            st.success("Login Success")
+            st.rerun()
+        else:
+            st.error("Invalid Credentials")
+
+if not st.session_state.login:
+    login()
+    st.stop()
+
+# ---------------- LOAD MODEL ----------------
 model = joblib.load("huntington_ml_model.pkl")
 
-# ================= DATABASE =================
+# ---------------- SIDEBAR ----------------
+st.sidebar.title("🧬 Navigation")
 
-conn = sqlite3.connect("patients.db")
-cursor = conn.cursor()
+page = st.sidebar.radio(
+    "Go to",
+    ["🏠 Dashboard", "👤 Patient Prediction", "📊 Batch Prediction"]
+)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS patients
-(name TEXT, gene TEXT, repeat INT, result TEXT)
-""")
-conn.commit()
+# ---------------- ANIMATION ----------------
+def load_lottie():
+    return {
+        "v":"5.5.7",
+        "fr":30,
+        "ip":0,
+        "op":60,
+        "w":200,
+        "h":200,
+        "nm":"DNA",
+        "ddd":0,
+        "assets":[],
+        "layers":[]
+    }
 
-# ================= FUNCTIONS =================
+st_lottie(load_lottie(), height=150)
 
-def make_pdf(name,gene,repeat,result):
+# ---------------- DATABASE ----------------
+if "patients" not in st.session_state:
+    st.session_state.patients = pd.DataFrame(columns=["Name","CAG","Risk"])
 
-    file="patient_report.pdf"
+# ================= DASHBOARD =================
+if page == "🏠 Dashboard":
 
-    c=canvas.Canvas(file,pagesize=letter)
+    st.title("🧬 Huntington Genomic Intelligence Platform")
 
-    c.drawString(100,750,"Genomic Risk Report")
+    col1,col2,col3 = st.columns(3)
 
-    c.drawString(100,700,f"Patient: {name}")
-    c.drawString(100,650,f"Gene: {gene}")
-    c.drawString(100,600,f"Repeat: {repeat}")
-    c.drawString(100,550,f"Result: {result}")
+    col1.metric("Total Patients", len(st.session_state.patients))
+    col2.metric("High Risk", (st.session_state.patients["Risk"]=="High").sum())
+    col3.metric("Normal", (st.session_state.patients["Risk"]=="Low").sum())
 
-    c.save()
+    # SEARCH FILTER
+    search = st.text_input("🔍 Search Patient")
 
-    return file
+    if search:
+        df = st.session_state.patients[
+            st.session_state.patients["Name"].str.contains(search, case=False)
+        ]
+        st.dataframe(df)
 
+    else:
+        st.dataframe(st.session_state.patients)
 
-def history_pdf(df):
+# ================= SINGLE PREDICTION =================
+if page == "👤 Patient Prediction":
 
-    file="history.pdf"
+    st.title("🧠 Real-Time Huntington Risk Prediction")
 
-    c=canvas.Canvas(file,pagesize=letter)
+    name = st.text_input("Patient Name")
 
-    y=750
-
-    for i,row in df.iterrows():
-
-        c.drawString(50,y,
-        f"{row['name']} | {row['gene']} | {row['repeat']} | {row['result']}")
-
-        y-=20
-
-        if y<100:
-            c.showPage()
-            y=750
-
-    c.save()
-
-    return file
-
-
-def annotate(chrom,pos):
-
-    try:
-
-        r=requests.get(
-        f"https://rest.ensembl.org/overlap/region/human/{chrom}:{pos}-{pos}",
-        headers={"Content-Type":"application/json"})
-
-        data=r.json()
-
-        return data[0]["external_name"] if data else "Intergenic"
-
-    except:
-        return "NA"
-
-drug_map={
-"HTT":"Tetrabenazine",
-"BRCA1":"Olaparib",
-"CFTR":"Ivacaftor"
-}
-
-# ================= TABS =================
-
-tabs=st.tabs([
-"Prediction",
-"History",
-"Batch",
-"FASTA",
-"VCF",
-"Analytics",
-"ROC"
-])
-
-# =====================================================
-# PREDICTION
-# =====================================================
-
-with tabs[0]:
-
-    gene=st.selectbox("Gene",["HTT","BRCA1","CFTR"])
-
-    repeat=st.slider("Repeat",5,60,20)
-
-    name=st.text_input("Patient")
-
-    thr={"HTT":36,"BRCA1":10,"CFTR":15}[gene]
+    cag = st.slider("CAG Repeat Count", 10, 60, 25)
 
     if st.button("Predict"):
 
-        result="Risk" if repeat>=thr else "Normal"
+        pred = model.predict(pd.DataFrame({"CAG_Repeats":[cag]}))[0]
 
-        st.write(result)
+        risk = "High" if pred==1 else "Low"
 
-        cursor.execute(
-        "INSERT INTO patients VALUES (?,?,?,?)",
-        (name,gene,repeat,result)
+        st.success(f"Risk Level: {risk}")
+
+        # GAUGE METER
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=cag,
+            title={'text': "CAG Risk Meter"},
+            gauge={
+                'axis': {'range': [10,60]},
+                'steps':[
+                    {'range':[10,26],'color':'green'},
+                    {'range':[27,35],'color':'orange'},
+                    {'range':[36,60],'color':'red'}
+                ]
+            }
+        ))
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # SAVE PATIENT
+        new = pd.DataFrame({
+            "Name":[name],
+            "CAG":[cag],
+            "Risk":[risk]
+        })
+
+        st.session_state.patients = pd.concat(
+            [st.session_state.patients,new],
+            ignore_index=True
         )
-        conn.commit()
 
-        pdf=make_pdf(name,gene,repeat,result)
+# ================= BATCH PREDICTION =================
+if page == "📊 Batch Prediction":
 
-        with open(pdf,"rb") as f:
-            st.download_button("Download Report",f)
+    st.title("📁 Upload Patient CSV")
 
-# =====================================================
-# HISTORY
-# =====================================================
+    file = st.file_uploader("Upload CSV")
 
-with tabs[1]:
+    if file:
 
-    df=pd.read_sql("SELECT * FROM patients",conn)
+        df = pd.read_csv(file)
 
-    st.dataframe(df)
-
-    if st.button("Download History PDF"):
-
-        file=history_pdf(df)
-
-        with open(file,"rb") as f:
-            st.download_button("Download",f)
-
-# =====================================================
-# BATCH
-# =====================================================
-
-with tabs[2]:
-
-    csv=st.file_uploader("CSV",type=["csv"])
-
-    if csv:
-
-        df=pd.read_csv(csv)
-
-        df["Prediction"]=(df["CAG_Repeats"]>=36).astype(int)
+        df["Risk"] = model.predict(df)
 
         st.dataframe(df)
 
-# =====================================================
-# FASTA
-# =====================================================
-
-with tabs[3]:
-
-    fasta=st.file_uploader("FASTA",type=["fa","fasta"])
-
-    if fasta:
-
-        txt=io.StringIO(fasta.getvalue().decode())
-
-        record=SeqIO.read(txt,"fasta")
-
-        seq=str(record.seq)
-
-        m=list(re.finditer(r"(?:CAG){2,}",seq))
-
-        pos=[(x.start(),(x.end()-x.start())//3) for x in m]
-
-        if pos:
-
-            df=pd.DataFrame(pos,columns=["Position","Repeat"])
-
-            st.dataframe(df)
-
-            fig,ax=plt.subplots(figsize=(12,2))
-
-            for p in df["Position"][:40]:
-                ax.plot([p,p],[0,1])
-
-            st.pyplot(fig)
-
-# =====================================================
-# VCF
-# =====================================================
-
-with tabs[4]:
-
-    vcf=st.file_uploader("VCF",type=["vcf"])
-
-    if vcf:
-
-        lines=vcf.getvalue().decode().split("\n")
-
-        vars=[]
-
-        for l in lines:
-
-            if not l.startswith("#") and l.strip():
-
-                c=l.split("\t")
-
-                vars.append([c[0],int(c[1])])
-
-        df=pd.DataFrame(vars,columns=["Chrom","Pos"])
-
-        df["Gene"]=df.apply(lambda x:
-        annotate(x["Chrom"],x["Pos"]),axis=1)
-
-        df["Drug"]=df["Gene"].map(drug_map)
-
-        prs=df["Gene"].map({"HTT":2.5,"BRCA1":3,"CFTR":1.8}).sum()
-
-        st.write("PRS:",prs)
-
-        st.dataframe(df)
-
-# =====================================================
-# ANALYTICS
-# =====================================================
-
-with tabs[5]:
-
-    st.subheader("CNV")
-
-    cnv=pd.DataFrame({
-    "Region":range(20),
-    "Type":np.random.choice(["Del","Amp","Norm"],20)
-    })
-
-    st.dataframe(cnv)
-
-    st.subheader("Expression Heatmap")
-
-    expr=np.random.randn(10,5)
-
-    fig,ax=plt.subplots()
-
-    ax.imshow(expr)
-
-    st.pyplot(fig)
-
-    st.subheader("Network")
-
-    G=nx.Graph()
-
-    for i in range(10):
-        G.add_edge(f"V{i}",f"G{i%3}")
-
-    fig2=plt.figure()
-
-    nx.draw(G,with_labels=True)
-
-    st.pyplot(fig2)
-
-    st.subheader("PCA")
-
-    X=np.random.randn(8,20)
-
-    comp=PCA(2).fit_transform(X)
-
-    fig3,ax3=plt.subplots()
-
-    ax3.scatter(comp[:,0],comp[:,1])
-
-    st.pyplot(fig3)
-
-    st.subheader("Survival")
-
-    km=KaplanMeierFitter()
-
-    t=np.random.exponential(10,50)
-    e=np.random.choice([0,1],50)
-
-    km.fit(t,e)
-
-    fig4,ax4=plt.subplots()
-
-    km.plot(ax=ax4)
-
-    st.pyplot(fig4)
-
-# =====================================================
-# ROC
-# =====================================================
-
-with tabs[6]:
-
-    x=np.linspace(15,55,200)
-
-    p=model.predict_proba(
-    pd.DataFrame({"CAG_Repeats":x}))[:,1]
-
-    y=(x>=36).astype(int)
-
-    fpr,tpr,_=roc_curve(y,p)
-
-    fig,ax=plt.subplots()
-
-    ax.plot(fpr,tpr)
-    ax.plot([0,1],[0,1],'--')
-
-    st.pyplot(fig)
+        st.download_button(
+            "Download Results",
+            df.to_csv(index=False),
+            "prediction.csv"
+        )
