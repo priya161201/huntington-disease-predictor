@@ -1,108 +1,212 @@
 import streamlit as st
-import sqlite3
+import numpy as np
 import pandas as pd
+import sqlite3
+import joblib
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.graph_objects as go
+from sklearn.metrics import roc_curve, auc, confusion_matrix
+from reportlab.pdfgen import canvas
+from io import BytesIO
 
-st.set_page_config(page_title="Huntington Predictor", layout="wide")
+# ------------------ PAGE CONFIG ------------------
 
-# ================= DATABASE =================
+st.set_page_config(page_title="Genomic Risk Platform", layout="wide")
+
+# ------------------ DATABASE ------------------
 
 conn = sqlite3.connect("patients.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS patients(
-id INTEGER PRIMARY KEY AUTOINCREMENT,
 name TEXT,
-age INTEGER,
 cag INTEGER,
 risk TEXT
 )
 """)
-
 conn.commit()
 
-# ================= LOGIN =================
+# ------------------ LOGIN ------------------
 
 if "login" not in st.session_state:
     st.session_state.login = False
 
-with st.sidebar:
-    st.title("Login")
+st.sidebar.title("Login")
 
-    user = st.text_input("Username")
-    pw = st.text_input("Password", type="password")
+user = st.sidebar.text_input("Username", key="login_user")
+pwd = st.sidebar.text_input("Password", type="password", key="login_pwd")
 
-    if st.button("Login"):
-        if user == "doctor" and pw == "123":
-            st.session_state.login = True
-        else:
-            st.error("Invalid")
+if st.sidebar.button("Login"):
+    if user == "doctor" and pwd == "123":
+        st.session_state.login = True
+        st.session_state.role = "doctor"
+    elif user == "patient" and pwd == "123":
+        st.session_state.login = True
+        st.session_state.role = "patient"
+    else:
+        st.sidebar.error("Invalid")
 
 if not st.session_state.login:
     st.stop()
 
-# ================= RISK FUNCTION =================
+# ------------------ THEME TOGGLE ------------------
 
-def risk_predict(cag):
-    if cag < 20:
-        return "No Risk"
-    elif cag <= 37:
-        return "Risk"
-    else:
-        return "High Risk"
+theme = st.sidebar.radio("Theme", ["Light", "Dark"], key="theme_toggle")
 
-# ================= UI =================
+# ------------------ MODEL ------------------
 
-st.title("Huntington Disease Risk Predictor")
+model = joblib.load("huntington_ml_model.pkl")
 
-name = st.text_input("Patient Name")
-age = st.number_input("Age", 1, 100)
-cag = st.slider("CAG Repeat Count", 10, 60)
+# ------------------ TABS ------------------
 
-if st.button("Predict Risk"):
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+["Prediction","Database","Genome Track","Analytics","Report"]
+)
 
-    risk = risk_predict(cag)
+# ==========================================================
+# TAB 1 PREDICTION
+# ==========================================================
 
-    if risk == "No Risk":
-        st.success(risk)
-    elif risk == "Risk":
-        st.warning(risk)
-    else:
-        st.error(risk)
+with tab1:
 
-    # ⭐⭐⭐ FIXED INSERT QUERY ⭐⭐⭐
-    c.execute(
-        "INSERT INTO patients(name,age,cag,risk) VALUES (?,?,?,?)",
-        (name, age, cag, risk)
-    )
-    conn.commit()
+    st.title("🧬 Huntington Disease Risk Predictor")
 
-# ================= DATABASE VIEW =================
+    cag = st.slider("CAG Repeat",10,60,20,key="risk_slider")
 
-st.subheader("Patient History")
+    if st.button("Predict Risk",key="predict_btn"):
 
-df = pd.read_sql_query("SELECT * FROM patients ORDER BY id DESC", conn)
+        pred = model.predict(pd.DataFrame({"CAG_Repeats":[cag]}))[0]
+        prob = model.predict_proba(pd.DataFrame({"CAG_Repeats":[cag]}))[0][1]
 
-st.dataframe(df)
+        risk = "HIGH RISK" if pred==1 else "LOW RISK"
 
-# ================= EXPORT LAST =================
+        col1,col2 = st.columns(2)
 
-if st.button("Export Last Patient Report"):
+        with col1:
+            st.metric("Predicted Risk",risk)
 
-    if len(df) > 0:
-        last = df.iloc[0]
+        with col2:
 
-        report = f"""
-Patient Name : {last['name']}
-Age : {last['age']}
-CAG Repeat : {last['cag']}
-Risk : {last['risk']}
-"""
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=prob*100,
+                title={"text":"Risk %"},
+                gauge={
+                    "axis":{"range":[0,100]},
+                    "bar":{"color":"red"},
+                    "steps":[
+                        {"range":[0,36],"color":"green"},
+                        {"range":[36,100],"color":"red"}
+                    ]
+                }
+            ))
+
+            st.plotly_chart(fig,use_container_width=True)
+
+# ==========================================================
+# TAB 2 DATABASE
+# ==========================================================
+
+with tab2:
+
+    st.header("Patient Database")
+
+    pname = st.text_input("Patient Name",key="db_name")
+    pcag = st.number_input("CAG",10,60,20,key="db_cag")
+
+    if st.button("Save Patient",key="save_db"):
+
+        pred = model.predict(pd.DataFrame({"CAG_Repeats":[pcag]}))[0]
+        risk = "High" if pred==1 else "Low"
+
+        c.execute("INSERT INTO patients VALUES(?,?,?)",(pname,pcag,risk))
+        conn.commit()
+        st.success("Saved")
+
+    search = st.text_input("Search Patient",key="search_db")
+
+    df = pd.read_sql("SELECT * FROM patients",conn)
+
+    if search:
+        df = df[df["name"].str.contains(search)]
+
+    st.dataframe(df)
+
+# ==========================================================
+# TAB 3 GENOME TRACK
+# ==========================================================
+
+with tab3:
+
+    st.header("Genome Browser Visualization")
+
+    positions = np.random.randint(1,10000,20)
+    lengths = np.random.randint(1,10,20)
+
+    plt.figure(figsize=(10,3))
+    for p,l in zip(positions,lengths):
+        plt.plot([p,p+l],[1,1],linewidth=l)
+    plt.yticks([])
+    plt.xlabel("Genome Position")
+    st.pyplot(plt)
+
+# ==========================================================
+# TAB 4 ANALYTICS
+# ==========================================================
+
+with tab4:
+
+    st.header("Model Analytics")
+
+    X = np.random.randint(15,55,200)
+    y = np.array([1 if i>36 else 0 for i in X])
+
+    y_prob = model.predict_proba(pd.DataFrame({"CAG_Repeats":X}))[:,1]
+
+    fpr,tpr,_ = roc_curve(y,y_prob)
+    roc_auc = auc(fpr,tpr)
+
+    fig = plt.figure()
+    plt.plot(fpr,tpr,label=f"AUC={roc_auc:.2f}")
+    plt.plot([0,1],[0,1],"--")
+    plt.legend()
+    st.pyplot(fig)
+
+    cm = confusion_matrix(y,model.predict(pd.DataFrame({"CAG_Repeats":X})))
+
+    fig2 = plt.figure()
+    sns.heatmap(cm,annot=True,fmt="d")
+    st.pyplot(fig2)
+
+# ==========================================================
+# TAB 5 PDF REPORT
+# ==========================================================
+
+with tab5:
+
+    st.header("Generate Medical Report")
+
+    rname = st.text_input("Report Patient Name",key="report_name")
+    rcag = st.number_input("Report CAG",10,60,20,key="report_cag")
+
+    if st.button("Generate PDF",key="pdf_btn"):
+
+        buffer = BytesIO()
+        cpdf = canvas.Canvas(buffer)
+
+        pred = model.predict(pd.DataFrame({"CAG_Repeats":[rcag]}))[0]
+        risk = "High Risk" if pred==1 else "Low Risk"
+
+        cpdf.drawString(100,750,f"Patient: {rname}")
+        cpdf.drawString(100,720,f"CAG: {rcag}")
+        cpdf.drawString(100,690,f"Risk: {risk}")
+
+        cpdf.save()
 
         st.download_button(
             "Download Report",
-            report,
-            file_name="patient_report.txt"
+            buffer.getvalue(),
+            file_name="report.pdf"
         )
-    else:
-        st.warning("No data yet")
