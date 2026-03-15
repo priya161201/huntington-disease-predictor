@@ -38,19 +38,21 @@ def huntington_risk_predictor(cag):
 
 # ---------------- LOGIN ---------------- #
 
-st.set_page_config(page_title="HD Predictor", layout="wide")
-
 if "login" not in st.session_state:
     st.session_state.login = False
 
 st.sidebar.title("Login")
 
-user = st.sidebar.text_input("Username")
-pwd = st.sidebar.text_input("Password", type="password")
+user = st.sidebar.text_input("Username", key="login_user")
+pwd = st.sidebar.text_input("Password", type="password", key="login_pwd")
 
 if st.sidebar.button("Login"):
-    if user == "admin" and pwd == "admin":
+    if user == "doctor" and pwd == "123":
         st.session_state.login = True
+        st.session_state.role = "doctor"
+    elif user == "patient" and pwd == "123":
+        st.session_state.login = True
+        st.session_state.role = "patient"
     else:
         st.sidebar.error("Invalid")
 
