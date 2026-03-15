@@ -71,16 +71,43 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 
 with tab1:
 
-    st.title("🧬 Huntington Disease Risk Predictor")
+    
+# ================= RISK FUNCTION =================
 
-    cag = st.slider("CAG Repeat",10,60,20,key="risk_slider")
+def risk_predict(cag):
+    if cag < 20:
+        return "No Risk"
+    elif cag <= 37:
+        return "Risk"
+    else:
+        return "High Risk"
 
-    if st.button("Predict Risk",key="predict_btn"):
+# ================= UI =================
 
-        pred = model.predict(pd.DataFrame({"CAG_Repeats":[cag]}))[0]
-        prob = model.predict_proba(pd.DataFrame({"CAG_Repeats":[cag]}))[0][1]
+st.title("Huntington Disease Risk Predictor")
 
-        risk = "HIGH RISK" if pred==1 else "LOW RISK"
+name = st.text_input("Patient Name")
+age = st.number_input("Age", 1, 100)
+cag = st.slider("CAG Repeat Count", 10, 60)
+
+if st.button("Predict Risk"):
+
+    risk = risk_predict(cag)
+
+    if risk == "No Risk":
+        st.success(risk)
+    elif risk == "Risk":
+        st.warning(risk)
+    else:
+        st.error(risk)
+
+    # ⭐⭐⭐ FIXED INSERT QUERY ⭐⭐⭐
+    c.execute(
+        "INSERT INTO patients(name,age,cag,risk) VALUES (?,?,?,?)",
+        (name, age, cag, risk)
+    )
+    conn.commit()
+
 
         col1,col2 = st.columns(2)
 
