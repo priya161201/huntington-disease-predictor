@@ -1,9 +1,7 @@
 streamlit
 pandas
 numpy
-matplotlib
-plotly
 scikit-learn
-joblib
-biopython
-seaborn
+plotly
+lifelines
+reportlab
