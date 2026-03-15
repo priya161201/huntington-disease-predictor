@@ -1,164 +1,185 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
+import pandas as pd
 import joblib
+import sqlite3
 import plotly.graph_objects as go
-from streamlit_lottie import st_lottie
-import json
+import matplotlib.pyplot as plt
+from Bio import SeqIO
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="Genomic AI Platform", layout="wide")
+# ---------------------- PAGE CONFIG ----------------------
 
-# ---------------- THEME TOGGLE ----------------
-theme = st.sidebar.toggle("🌙 Dark Mode")
+st.set_page_config(
+    page_title="Genomic AI Platform",
+    layout="wide"
+)
 
-if theme:
+# ---------------------- THEME TOGGLE ----------------------
+
+theme = st.sidebar.radio("Theme", ["Light", "Dark"])
+
+if theme == "Dark":
     st.markdown("""
     <style>
-    .stApp {background-color:#0E1117;color:white;}
+    body {background-color:#0E1117;color:white;}
     </style>
     """, unsafe_allow_html=True)
 
-# ---------------- LOGIN SYSTEM ----------------
-if "login" not in st.session_state:
-    st.session_state.login = False
+# ---------------------- LOGIN SYSTEM ----------------------
 
-def login():
-    st.title("🔐 Genomic AI Login")
+st.sidebar.title("Login")
 
-    user = st.text_input("Username")
-    pwd = st.text_input("Password", type="password")
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
 
-    if st.button("Login"):
-        if user == "admin" and pwd == "genomics":
-            st.session_state.login = True
-            st.success("Login Success")
-            st.rerun()
-        else:
-            st.error("Invalid Credentials")
-
-if not st.session_state.login:
-    login()
+if username != "admin" or password != "1234":
+    st.warning("Login to continue")
     st.stop()
 
-# ---------------- LOAD MODEL ----------------
-model = joblib.load("huntington_ml_model.pkl")
+# ---------------------- DATABASE ----------------------
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.title("🧬 Navigation")
+conn = sqlite3.connect("patients.db", check_same_thread=False)
+c = conn.cursor()
 
-page = st.sidebar.radio(
-    "Go to",
-    ["🏠 Dashboard", "👤 Patient Prediction", "📊 Batch Prediction"]
+c.execute("""
+CREATE TABLE IF NOT EXISTS patients(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT,
+cag INTEGER,
+risk TEXT
 )
+""")
+conn.commit()
 
-# ---------------- ANIMATION ----------------
-def load_lottie():
-    return {
-        "v":"5.5.7",
-        "fr":30,
-        "ip":0,
-        "op":60,
-        "w":200,
-        "h":200,
-        "nm":"DNA",
-        "ddd":0,
-        "assets":[],
-        "layers":[]
-    }
+# ---------------------- LOAD MODEL ----------------------
 
-st_lottie(load_lottie(), height=150)
+try:
+    model = joblib.load("huntington_ml_model.pkl")
+except:
+    model = None
 
-# ---------------- DATABASE ----------------
-if "patients" not in st.session_state:
-    st.session_state.patients = pd.DataFrame(columns=["Name","CAG","Risk"])
+# ---------------------- TABS ----------------------
 
-# ================= DASHBOARD =================
-if page == "🏠 Dashboard":
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🧠 Risk Prediction",
+    "🧬 FASTA Analysis",
+    "📊 Analytics",
+    "🗄 Patient Database"
+])
 
-    st.title("🧬 Huntington Genomic Intelligence Platform")
+# =========================================================
+# TAB 1 — RISK PREDICTION
+# =========================================================
 
-    col1,col2,col3 = st.columns(3)
+with tab1:
 
-    col1.metric("Total Patients", len(st.session_state.patients))
-    col2.metric("High Risk", (st.session_state.patients["Risk"]=="High").sum())
-    col3.metric("Normal", (st.session_state.patients["Risk"]=="Low").sum())
+    st.title("🧠 Huntington Disease Risk Predictor")
 
-    # SEARCH FILTER
-    search = st.text_input("🔍 Search Patient")
+    cag = st.slider("CAG Repeat Count", 10, 60, 20)
 
-    if search:
-        df = st.session_state.patients[
-            st.session_state.patients["Name"].str.contains(search, case=False)
-        ]
-        st.dataframe(df)
+    if st.button("Predict Risk"):
 
-    else:
-        st.dataframe(st.session_state.patients)
+        if model is not None:
+            pred = model.predict(pd.DataFrame({"CAG_Repeats":[cag]}))[0]
+        else:
+            pred = 1 if cag >= 36 else 0
 
-# ================= SINGLE PREDICTION =================
-if page == "👤 Patient Prediction":
+        risk = "High Risk" if pred == 1 else "Low Risk"
 
-    st.title("🧠 Real-Time Huntington Risk Prediction")
+        st.success(f"Risk Status: {risk}")
 
-    name = st.text_input("Patient Name")
-
-    cag = st.slider("CAG Repeat Count", 10, 60, 25)
-
-    if st.button("Predict"):
-
-        pred = model.predict(pd.DataFrame({"CAG_Repeats":[cag]}))[0]
-
-        risk = "High" if pred==1 else "Low"
-
-        st.success(f"Risk Level: {risk}")
-
-        # GAUGE METER
+        # Gauge meter
         fig = go.Figure(go.Indicator(
             mode="gauge+number",
             value=cag,
-            title={'text': "CAG Risk Meter"},
+            title={"text":"CAG Severity"},
             gauge={
-                'axis': {'range': [10,60]},
-                'steps':[
-                    {'range':[10,26],'color':'green'},
-                    {'range':[27,35],'color':'orange'},
-                    {'range':[36,60],'color':'red'}
+                "axis":{"range":[10,60]},
+                "steps":[
+                    {"range":[10,27],"color":"green"},
+                    {"range":[27,36],"color":"yellow"},
+                    {"range":[36,60],"color":"red"}
                 ]
             }
         ))
 
         st.plotly_chart(fig, use_container_width=True)
 
-        # SAVE PATIENT
-        new = pd.DataFrame({
-            "Name":[name],
-            "CAG":[cag],
-            "Risk":[risk]
-        })
+        name = st.text_input("Patient Name")
 
-        st.session_state.patients = pd.concat(
-            [st.session_state.patients,new],
-            ignore_index=True
-        )
+        if st.button("Save Patient"):
+            c.execute(
+                "INSERT INTO patients(name,cag,risk) VALUES(?,?,?)",
+                (name,cag,risk)
+            )
+            conn.commit()
+            st.success("Saved")
 
-# ================= BATCH PREDICTION =================
-if page == "📊 Batch Prediction":
+# =========================================================
+# TAB 2 — FASTA ANALYSIS
+# =========================================================
 
-    st.title("📁 Upload Patient CSV")
+with tab2:
 
-    file = st.file_uploader("Upload CSV")
+    st.title("🧬 HTT FASTA Analysis")
 
-    if file:
+    fasta = st.file_uploader("Upload FASTA", type=["fa","fasta"])
 
-        df = pd.read_csv(file)
+    if fasta is not None:
 
-        df["Risk"] = model.predict(df)
+        import io
+        record = SeqIO.read(io.StringIO(fasta.getvalue().decode()), "fasta")
 
-        st.dataframe(df)
+        seq = str(record.seq)
 
+        count = seq.count("CAG")
+
+        st.metric("Total CAG Count", count)
+
+        lengths = [len(x) for x in seq.split("CAG")]
+
+        plt.hist(lengths)
+        st.pyplot(plt)
+
+# =========================================================
+# TAB 3 — ANALYTICS
+# =========================================================
+
+with tab3:
+
+    st.title("📊 Population Analytics")
+
+    data = pd.DataFrame({
+        "CAG": np.random.randint(15,55,200)
+    })
+
+    data["Risk"] = data["CAG"].apply(lambda x:1 if x>=36 else 0)
+
+    fig, ax = plt.subplots()
+    ax.scatter(data["CAG"], data["Risk"])
+    ax.axvline(36,color="red")
+    st.pyplot(fig)
+
+# =========================================================
+# TAB 4 — DATABASE
+# =========================================================
+
+with tab4:
+
+    st.title("🗄 Patient Records")
+
+    df = pd.read_sql("SELECT * FROM patients", conn)
+
+    search = st.text_input("Search Patient")
+
+    if search:
+        df = df[df["name"].str.contains(search)]
+
+    st.dataframe(df)
+
+    if st.button("Download CSV"):
         st.download_button(
-            "Download Results",
-            df.to_csv(index=False),
-            "prediction.csv"
+            "Download",
+            df.to_csv().encode(),
+            "patients.csv"
         )
