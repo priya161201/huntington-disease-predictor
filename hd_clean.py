@@ -1,185 +1,134 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import joblib
-import sqlite3
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-from Bio import SeqIO
+from io import StringIO
 
-# ---------------------- PAGE CONFIG ----------------------
+# ================= THEME =================
 
-st.set_page_config(
-    page_title="Genomic AI Platform",
-    layout="wide"
-)
+st.set_page_config(page_title="Huntington AI", layout="wide")
 
-# ---------------------- THEME TOGGLE ----------------------
+if "theme" not in st.session_state:
+    st.session_state.theme = "Light"
 
-theme = st.sidebar.radio("Theme", ["Light", "Dark"])
+if st.sidebar.radio("Theme", ["Light","Dark"]) == "Dark":
+    st.session_state.theme = "Dark"
+    st.markdown(
+        """
+        <style>
+        .stApp {background-color:#0E1117;color:white}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
-if theme == "Dark":
-    st.markdown("""
-    <style>
-    body {background-color:#0E1117;color:white;}
-    </style>
-    """, unsafe_allow_html=True)
+# ================= LOGIN =================
 
-# ---------------------- LOGIN SYSTEM ----------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 
 st.sidebar.title("Login")
 
-username = st.sidebar.text_input("Username")
-password = st.sidebar.text_input("Password", type="password")
+user = st.sidebar.text_input("Username")
+pw = st.sidebar.text_input("Password", type="password")
 
-if username != "admin" or password != "1234":
-    st.warning("Login to continue")
-    st.stop()
+if st.sidebar.button("Login"):
+    if user != "" and pw != "":
+        st.session_state.logged_in = True
+        st.success("Login Successful")
 
-# ---------------------- DATABASE ----------------------
+# ================= MAIN =================
 
-conn = sqlite3.connect("patients.db", check_same_thread=False)
-c = conn.cursor()
+if st.session_state.logged_in:
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS patients(
-id INTEGER PRIMARY KEY AUTOINCREMENT,
-name TEXT,
-cag INTEGER,
-risk TEXT
-)
-""")
-conn.commit()
+    st.title("🧬 Huntington Disease AI Platform")
 
-# ---------------------- LOAD MODEL ----------------------
+    tab1, tab2, tab3 = st.tabs([
+        "Prediction",
+        "Batch Patients",
+        "FASTA Analysis"
+    ])
 
-try:
-    model = joblib.load("huntington_ml_model.pkl")
-except:
-    model = None
+    # ================= PREDICTION =================
 
-# ---------------------- TABS ----------------------
+    with tab1:
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "🧠 Risk Prediction",
-    "🧬 FASTA Analysis",
-    "📊 Analytics",
-    "🗄 Patient Database"
-])
+        cag = st.slider("Select CAG Repeat", 10, 60, 20)
 
-# =========================================================
-# TAB 1 — RISK PREDICTION
-# =========================================================
+        if st.button("Predict Risk"):
 
-with tab1:
+            if cag < 27:
+                risk = 10
+                label = "Normal"
+            elif cag < 36:
+                risk = 50
+                label = "Intermediate"
+            else:
+                risk = 90
+                label = "High Risk"
 
-    st.title("🧠 Huntington Disease Risk Predictor")
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=risk,
+                title={'text': label},
+                gauge={
+                    'axis': {'range': [0,100]},
+                    'bar': {'color': "red"},
+                    'steps': [
+                        {'range': [0,30], 'color': "green"},
+                        {'range': [30,70], 'color': "orange"},
+                        {'range': [70,100], 'color': "red"},
+                    ]
+                }
+            ))
 
-    cag = st.slider("CAG Repeat Count", 10, 60, 20)
+            st.plotly_chart(fig, use_container_width=True)
 
-    if st.button("Predict Risk"):
+    # ================= BATCH =================
 
-        if model is not None:
-            pred = model.predict(pd.DataFrame({"CAG_Repeats":[cag]}))[0]
-        else:
-            pred = 1 if cag >= 36 else 0
+    with tab2:
 
-        risk = "High Risk" if pred == 1 else "Low Risk"
+        st.subheader("Upload Patient CSV")
 
-        st.success(f"Risk Status: {risk}")
+        file = st.file_uploader("Upload CSV", type=["csv"])
 
-        # Gauge meter
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=cag,
-            title={"text":"CAG Severity"},
-            gauge={
-                "axis":{"range":[10,60]},
-                "steps":[
-                    {"range":[10,27],"color":"green"},
-                    {"range":[27,36],"color":"yellow"},
-                    {"range":[36,60],"color":"red"}
-                ]
-            }
-        ))
+        if file:
 
-        st.plotly_chart(fig, use_container_width=True)
+            df = pd.read_csv(file)
 
-        name = st.text_input("Patient Name")
+            def predict(x):
+                if x < 27:
+                    return "Normal"
+                elif x < 36:
+                    return "Intermediate"
+                else:
+                    return "High Risk"
 
-        if st.button("Save Patient"):
-            c.execute(
-                "INSERT INTO patients(name,cag,risk) VALUES(?,?,?)",
-                (name,cag,risk)
+            df["Prediction"] = df["CAG_Repeats"].apply(predict)
+
+            st.dataframe(df)
+
+            st.download_button(
+                "Download Results",
+                df.to_csv(index=False),
+                "predictions.csv"
             )
-            conn.commit()
-            st.success("Saved")
 
-# =========================================================
-# TAB 2 — FASTA ANALYSIS
-# =========================================================
+    # ================= FASTA =================
 
-with tab2:
+    with tab3:
 
-    st.title("🧬 HTT FASTA Analysis")
+        fasta = st.file_uploader("Upload FASTA", type=["fasta","fa"])
 
-    fasta = st.file_uploader("Upload FASTA", type=["fa","fasta"])
+        if fasta:
 
-    if fasta is not None:
+            stringio = StringIO(fasta.getvalue().decode("utf-8"))
+            seq = stringio.read()
 
-        import io
-        record = SeqIO.read(io.StringIO(fasta.getvalue().decode()), "fasta")
+            cag_count = seq.count("CAG")
 
-        seq = str(record.seq)
+            st.metric("Detected CAG Motifs", cag_count)
 
-        count = seq.count("CAG")
+else:
 
-        st.metric("Total CAG Count", count)
-
-        lengths = [len(x) for x in seq.split("CAG")]
-
-        plt.hist(lengths)
-        st.pyplot(plt)
-
-# =========================================================
-# TAB 3 — ANALYTICS
-# =========================================================
-
-with tab3:
-
-    st.title("📊 Population Analytics")
-
-    data = pd.DataFrame({
-        "CAG": np.random.randint(15,55,200)
-    })
-
-    data["Risk"] = data["CAG"].apply(lambda x:1 if x>=36 else 0)
-
-    fig, ax = plt.subplots()
-    ax.scatter(data["CAG"], data["Risk"])
-    ax.axvline(36,color="red")
-    st.pyplot(fig)
-
-# =========================================================
-# TAB 4 — DATABASE
-# =========================================================
-
-with tab4:
-
-    st.title("🗄 Patient Records")
-
-    df = pd.read_sql("SELECT * FROM patients", conn)
-
-    search = st.text_input("Search Patient")
-
-    if search:
-        df = df[df["name"].str.contains(search)]
-
-    st.dataframe(df)
-
-    if st.button("Download CSV"):
-        st.download_button(
-            "Download",
-            df.to_csv().encode(),
-            "patients.csv"
-        )
+    st.warning("Please login from sidebar")
