@@ -7,15 +7,15 @@ st.set_page_config(page_title="Huntington Predictor", layout="wide")
 # ================= DATABASE =================
 
 conn = sqlite3.connect("patients.db", check_same_thread=False)
-c = conn.cursor()
+cursor = conn.cursor()
 
-c.execute("""
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS patients(
-id INTEGER PRIMARY KEY AUTOINCREMENT,
-name TEXT,
-age INTEGER,
-cag INTEGER,
-risk TEXT
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    age INTEGER,
+    cag INTEGER,
+    risk TEXT
 )
 """)
 
@@ -29,14 +29,14 @@ if "login" not in st.session_state:
 with st.sidebar:
     st.title("Login")
 
-    user = st.text_input("Username")
-    pw = st.text_input("Password", type="password")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if user == "doctor" and pw == "123":
+        if username == "doctor" and password == "123":
             st.session_state.login = True
         else:
-            st.error("Invalid")
+            st.error("Invalid Login")
 
 if not st.session_state.login:
     st.stop()
@@ -51,13 +51,13 @@ def risk_predict(cag):
     else:
         return "High Risk"
 
-# ================= UI =================
+# ================= MAIN UI =================
 
 st.title("Huntington Disease Risk Predictor")
 
 name = st.text_input("Patient Name")
-age = st.number_input("Age", 1, 100)
-cag = st.slider("CAG Repeat Count", 10, 60)
+age = st.number_input("Age", min_value=1, max_value=100, value=25)
+cag = st.slider("CAG Repeat Count", 10, 60, 20)
 
 if st.button("Predict Risk"):
 
@@ -70,27 +70,32 @@ if st.button("Predict Risk"):
     else:
         st.error(risk)
 
-    # ⭐⭐⭐ FIXED INSERT QUERY ⭐⭐⭐
-    c.execute(
-        "INSERT INTO patients(name,age,cag,risk) VALUES (?,?,?,?)",
+    # INSERT INTO DATABASE
+    cursor.execute(
+        "INSERT INTO patients(name, age, cag, risk) VALUES (?, ?, ?, ?)",
         (name, age, cag, risk)
     )
     conn.commit()
 
-# ================= DATABASE VIEW =================
+    st.success("Patient Saved")
+
+# ================= DATABASE TABLE =================
 
 st.subheader("Patient History")
 
-df = pd.read_sql_query("SELECT * FROM patients ORDER BY id DESC", conn)
+data = pd.read_sql_query(
+    "SELECT * FROM patients ORDER BY id DESC",
+    conn
+)
 
-st.dataframe(df)
+st.dataframe(data, use_container_width=True)
 
-# ================= EXPORT LAST =================
+# ================= EXPORT =================
 
 if st.button("Export Last Patient Report"):
 
-    if len(df) > 0:
-        last = df.iloc[0]
+    if len(data) > 0:
+        last = data.iloc[0]
 
         report = f"""
 Patient Name : {last['name']}
